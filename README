@@ -1,0 +1,35 @@
+wpx - WordPress eXtractor
+
+A command line tool for enumerating WordPress users and looking up their email hashes. Queries the WordPress REST API to discover users and attempts to crack their Gravatar email hashes.
+
+SETUP
+
+    export HASHES_API_KEY='your_api_key'
+
+Get your API key from hashes.com to enable hash lookups.
+
+USAGE
+
+    wpx <domain>
+
+EXAMPLES
+
+    wpx example.com
+    wpx https://myblog.wordpress.com
+    wpx 192.168.1.100:8080
+
+OUTPUT
+
+Returns JSON array with user information:
+- user: Display name
+- username: Login slug  
+- hash: Gravatar MD5 hash (if found)
+- plaintext: Recovered email address (if cracked)
+
+REQUIREMENTS
+
+- bash
+- curl  
+- jq
+
+The tool extracts Gravatar hashes from WordPress user avatars and attempts to recover the original email addresses through the hashes.com API.
